@@ -3,10 +3,7 @@ use std::io;
 use koi::Interpreter;
 
 pub fn value(source: &str) -> String {
-    Interpreter::new()
-        .run(source, &mut io::sink())
-        .unwrap()
-        .to_string()
+    Interpreter::new().run(source, &mut io::sink()).unwrap().to_string()
 }
 
 pub fn printed(source: &str) -> String {
@@ -16,8 +13,5 @@ pub fn printed(source: &str) -> String {
 }
 
 pub fn error(source: &str) -> String {
-    Interpreter::new()
-        .run(source, &mut io::sink())
-        .unwrap_err()
-        .to_string()
+    Interpreter::new().run(source, &mut io::sink()).unwrap_err().to_string()
 }

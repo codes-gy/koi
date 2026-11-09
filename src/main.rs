@@ -4,6 +4,15 @@ use std::process::ExitCode;
 use koi::{Interpreter, Value};
 
 fn main() -> ExitCode {
+    std::thread::Builder::new()
+        .stack_size(koi::STACK_SIZE)
+        .spawn(run_cli)
+        .expect("failed to start the interpreter thread")
+        .join()
+        .unwrap_or(ExitCode::FAILURE)
+}
+
+fn run_cli() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [] => repl(),
@@ -56,8 +65,8 @@ fn run_file(path: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match Interpreter::new().run(&source, &mut io::stdout()) {
-        Ok(_) => ExitCode::SUCCESS,
+    match Interpreter::new().run_script(&source, &mut io::stdout()) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{path}: {err}");
             ExitCode::FAILURE

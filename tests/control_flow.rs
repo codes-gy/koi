@@ -4,10 +4,7 @@ use support::{error, printed, value};
 
 #[test]
 fn if_is_an_expression() {
-    assert_eq!(
-        value("val score = 95\nif (score >= 90) \"A\" else \"B\""),
-        "A"
-    );
+    assert_eq!(value("val score = 95\nif (score >= 90) \"A\" else \"B\""), "A");
 }
 
 #[test]
@@ -45,10 +42,7 @@ fn condition_must_be_boolean() {
 
 #[test]
 fn comparison_and_logic_operators() {
-    assert_eq!(
-        value("1 < 2 && 2 <= 2 && 3 > 2 && 3 >= 3 && 1 != 2 && !(1 == 2)"),
-        "true"
-    );
+    assert_eq!(value("1 < 2 && 2 <= 2 && 3 > 2 && 3 >= 3 && 1 != 2 && !(1 == 2)"), "true");
     assert_eq!(value("\"apple\" < \"banana\""), "true");
     assert_eq!(value("1 == 1.0"), "true");
 }
@@ -164,10 +158,7 @@ fn break_outside_a_loop_is_rejected_before_running() {
 #[test]
 fn blocks_create_scopes() {
     assert!(error("if (true) {\n    val inner = 1\n}\ninner").contains("'inner'"));
-    assert_eq!(
-        value("val x = 1\nval y = if (true) {\n    val x = 2\n    x\n} else 0\nx + y"),
-        "3"
-    );
+    assert_eq!(value("val x = 1\nval y = if (true) {\n    val x = 2\n    x\n} else 0\nx + y"), "3");
 }
 
 #[test]

@@ -28,7 +28,7 @@ Rust 1.85 이상이 필요합니다.
 
 ```sh
 cargo run                                  # REPL
-cargo run -- examples/control_flow.koi     # 파일 실행
+cargo run -- examples/functions.koi        # 파일 실행
 cargo test
 ```
 
@@ -47,7 +47,7 @@ koi> if (x > 3) {
 | 기능 | 예시 |
 |---|---|
 | 변수 | `val` 은 다시 할당할 수 없고, `var` 는 할 수 있습니다 |
-| 타입 | `Int`, `Double`, `Boolean`, `String`, `IntRange`, `Unit` |
+| 타입 | `Int`, `Double`, `Boolean`, `String`, `IntRange`, `Unit`, `Any`, 함수 타입. 매개변수와 반환 타입은 실행할 때 검사합니다 |
 | 산술 | `+ - * / %`. `Int / Int` 는 몫만 남깁니다 (`10 / 4 == 2`) |
 | 대입 | `= += -= *= /= %=` |
 | 비교와 논리 | `== != < <= > >=`, `&& \|\| !` |
@@ -56,6 +56,12 @@ koi> if (x > 3) {
 | if 식 | `val 등급 = if (점수 >= 90) "A" else "B"` |
 | when 식 | `when (x) { 1, 2 -> "작음"; in 3..9 -> "중간"; else -> "큼" }` |
 | 반복 | `for (i in 1..10) { }`, `while (조건) { }`, `break`, `continue` |
+| 함수 | `fun 더하기(a: Int, b: Int): Int { return a + b }`, 식 본문 `fun 두배(x: Int) = x * 2` |
+| 인자 | 기본값 `fun f(x: Int = 1)`, 이름 붙은 인자 `f(x = 2)` |
+| 람다 | `{ a: Int, b: Int -> a + b }`, 매개변수가 하나면 `{ it * 2 }` |
+| 고차 함수 | 함수 타입 `(Int) -> Int`, 끝에 붙이는 람다 `repeat(3) { println(it) }` |
+| 클로저 | 람다와 함수는 만들어질 때의 변수를 기억하고 바꿀 수 있습니다 |
+| main | 파일에 `fun main()` 이 있으면 마지막에 자동으로 실행합니다 |
 | 출력 | `print(값)`, `println(값)` |
 | 주석 | `// 한 줄`, `/* 여러 줄 */` (중첩 가능) |
 | 기타 | 한글 변수 이름, `1_000_000` 숫자 구분자, `;` 로 한 줄에 여러 문장 |
@@ -71,6 +77,6 @@ koi> if (x > 3) {
 - `src/lexer.rs` 는 소스 코드를 토큰으로 나눕니다. 문자열 템플릿도 여기서 조각으로 나눕니다.
 - `src/parser.rs` 는 토큰을 AST로 만듭니다. 연산자 우선순위는 Pratt 파서의 표 하나로 관리합니다.
 - `src/ast.rs` 는 문법 트리를 정의합니다.
-- `src/interpreter.rs` 는 AST를 따라가며 실행합니다. 변수는 블록마다 쌓이는 스코프에 저장합니다.
+- `src/interpreter.rs` 는 AST를 따라가며 실행합니다. 변수는 서로 연결된 스코프 체인에 저장하고, 함수는 자기가 만들어진 스코프를 기억합니다 (클로저).
 - `src/error.rs` 는 줄 번호가 붙은 오류를 정의합니다. REPL이 여러 줄 입력을 기다릴지도 이 타입으로 판단합니다.
 - `tests/` 에는 언어의 동작을 사용자 입장에서 확인하는 테스트가 있습니다.

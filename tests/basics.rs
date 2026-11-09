@@ -72,10 +72,7 @@ fn val_cannot_be_reassigned() {
 
 #[test]
 fn compound_assignment() {
-    assert_eq!(
-        value("var n = 10\nn += 5\nn -= 3\nn *= 2\nn /= 4\nn %= 4\nn"),
-        "2"
-    );
+    assert_eq!(value("var n = 10\nn += 5\nn -= 3\nn *= 2\nn /= 4\nn %= 4\nn"), "2");
 }
 
 #[test]
@@ -95,14 +92,8 @@ fn korean_identifiers_work() {
 
 #[test]
 fn string_templates() {
-    assert_eq!(
-        printed("val name = \"Koi\"\nprintln(\"Hello, $name!\")"),
-        "Hello, Koi!\n"
-    );
-    assert_eq!(
-        printed("val a = 2\nprintln(\"${a} * 3 = ${a * 3}\")"),
-        "2 * 3 = 6\n"
-    );
+    assert_eq!(printed("val name = \"Koi\"\nprintln(\"Hello, $name!\")"), "Hello, Koi!\n");
+    assert_eq!(printed("val a = 2\nprintln(\"${a} * 3 = ${a * 3}\")"), "2 * 3 = 6\n");
 }
 
 #[test]
@@ -130,10 +121,7 @@ fn plus_concatenates_when_the_left_side_is_a_string() {
 
 #[test]
 fn print_does_not_add_a_newline_but_println_does() {
-    assert_eq!(
-        printed("print(\"a\")\nprint(1)\nprintln()\nprintln(2.5)"),
-        "a1\n2.5\n"
-    );
+    assert_eq!(printed("print(\"a\")\nprint(1)\nprintln()\nprintln(2.5)"), "a1\n2.5\n");
 }
 
 #[test]
@@ -143,10 +131,7 @@ fn println_takes_at_most_one_value() {
 
 #[test]
 fn comments_are_ignored() {
-    assert_eq!(
-        printed("// 한 줄\n/* 여러 줄\n /* 중첩 */ 주석 */\nprintln(1) // 끝"),
-        "1\n"
-    );
+    assert_eq!(printed("// 한 줄\n/* 여러 줄\n /* 중첩 */ 주석 */\nprintln(1) // 끝"), "1\n");
 }
 
 #[test]
@@ -164,13 +149,7 @@ fn line_break_after_an_operator_continues_the_expression() {
 fn interpreter_keeps_variables_between_runs() {
     let mut interpreter = Interpreter::new();
     interpreter.run("val x = 10", &mut io::sink()).unwrap();
-    assert_eq!(
-        interpreter
-            .run("x * 2", &mut io::sink())
-            .unwrap()
-            .to_string(),
-        "20"
-    );
+    assert_eq!(interpreter.run("x * 2", &mut io::sink()).unwrap().to_string(), "20");
 }
 
 #[test]
@@ -180,10 +159,7 @@ fn undefined_variable_reports_its_line() {
 
 #[test]
 fn type_mismatch_names_kotlin_types() {
-    assert_eq!(
-        error("\"a\" * 2"),
-        "줄 1: String * Int 연산은 할 수 없습니다"
-    );
+    assert_eq!(error("\"a\" * 2"), "줄 1: String * Int 연산은 할 수 없습니다");
 }
 
 #[test]
@@ -199,19 +175,9 @@ fn unknown_function_is_an_error() {
 #[test]
 fn unfinished_input_is_reported_as_incomplete() {
     let mut interpreter = Interpreter::new();
-    for source in [
-        "if (true) {",
-        "val x =",
-        "println(\"abc",
-        "1 +",
-        "/* 주석",
-        "when (1) {",
-    ] {
+    for source in ["if (true) {", "val x =", "println(\"abc", "1 +", "/* 주석", "when (1) {"] {
         let err = interpreter.run(source, &mut io::sink()).unwrap_err();
-        assert!(
-            err.is_incomplete(),
-            "{source:?} should wait for more input, got {err}"
-        );
+        assert!(err.is_incomplete(), "{source:?} should wait for more input, got {err}");
     }
     let err = interpreter.run("1 + )", &mut io::sink()).unwrap_err();
     assert!(!err.is_incomplete());

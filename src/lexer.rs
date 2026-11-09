@@ -17,6 +17,8 @@ pub enum TokenKind {
     Ident(String),
     Val,
     Var,
+    Fun,
+    Return,
     If,
     Else,
     When,
@@ -51,6 +53,7 @@ pub enum TokenKind {
     DotDotLess,
     Arrow,
     Comma,
+    Colon,
     LParen,
     RParen,
     LBrace,
@@ -76,6 +79,8 @@ impl fmt::Display for TokenKind {
             TokenKind::Eof => return write!(f, "입력의 끝"),
             TokenKind::Val => "val",
             TokenKind::Var => "var",
+            TokenKind::Fun => "fun",
+            TokenKind::Return => "return",
             TokenKind::If => "if",
             TokenKind::Else => "else",
             TokenKind::When => "when",
@@ -110,6 +115,7 @@ impl fmt::Display for TokenKind {
             TokenKind::DotDotLess => "..<",
             TokenKind::Arrow => "->",
             TokenKind::Comma => ",",
+            TokenKind::Colon => ":",
             TokenKind::LParen => "(",
             TokenKind::RParen => ")",
             TokenKind::LBrace => "{",
@@ -124,13 +130,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, KoiError> {
 }
 
 fn tokenize_at(source: &str, line: usize) -> Result<Vec<Token>, KoiError> {
-    Lexer {
-        chars: source.chars().collect(),
-        pos: 0,
-        line,
-        tokens: Vec::new(),
-    }
-    .run()
+    Lexer { chars: source.chars().collect(), pos: 0, line, tokens: Vec::new() }.run()
 }
 
 struct Lexer {
@@ -191,10 +191,7 @@ impl Lexer {
             };
             self.tokens.push(Token { kind, line });
         }
-        self.tokens.push(Token {
-            kind: TokenKind::Eof,
-            line: self.line,
-        });
+        self.tokens.push(Token { kind: TokenKind::Eof, line: self.line });
         Ok(self.tokens)
     }
 
@@ -229,31 +226,19 @@ impl Lexer {
     fn number(&mut self) -> Result<TokenKind, KoiError> {
         let start = self.pos;
         let mut is_double = false;
-        while self
-            .peek_at(0)
-            .is_some_and(|c| c.is_ascii_digit() || c == '_')
-        {
+        while self.peek_at(0).is_some_and(|c| c.is_ascii_digit() || c == '_') {
             self.pos += 1;
         }
         if self.peek_at(0) == Some('.') && self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) {
             is_double = true;
             self.pos += 1;
-            while self
-                .peek_at(0)
-                .is_some_and(|c| c.is_ascii_digit() || c == '_')
-            {
+            while self.peek_at(0).is_some_and(|c| c.is_ascii_digit() || c == '_') {
                 self.pos += 1;
             }
         }
-        let text: String = self.chars[start..self.pos]
-            .iter()
-            .filter(|&&c| c != '_')
-            .collect();
+        let text: String = self.chars[start..self.pos].iter().filter(|&&c| c != '_').collect();
         if is_double {
-            Ok(TokenKind::Double(
-                text.parse()
-                    .expect("digits and one dot always parse as f64"),
-            ))
+            Ok(TokenKind::Double(text.parse().expect("digits and one dot always parse as f64")))
         } else {
             text.parse()
                 .map(TokenKind::Int)
@@ -268,10 +253,7 @@ impl Lexer {
         let mut text = String::new();
         loop {
             let Some(c) = self.peek_at(0) else {
-                return Err(KoiError::incomplete(
-                    start_line,
-                    "문자열이 닫히지 않았습니다",
-                ));
+                return Err(KoiError::incomplete(start_line, "문자열이 닫히지 않았습니다"));
             };
             self.pos += 1;
             match c {
@@ -325,14 +307,8 @@ impl Lexer {
                     let name: String = self.chars[start..self.pos].iter().collect();
                     parts.push(TemplatePart::Text(std::mem::take(&mut text)));
                     parts.push(TemplatePart::Code(vec![
-                        Token {
-                            kind: TokenKind::Ident(name),
-                            line: self.line,
-                        },
-                        Token {
-                            kind: TokenKind::Eof,
-                            line: self.line,
-                        },
+                        Token { kind: TokenKind::Ident(name), line: self.line },
+                        Token { kind: TokenKind::Eof, line: self.line },
                     ]));
                 }
                 _ => {
@@ -360,6 +336,8 @@ impl Lexer {
         match word.as_str() {
             "val" => TokenKind::Val,
             "var" => TokenKind::Var,
+            "fun" => TokenKind::Fun,
+            "return" => TokenKind::Return,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "when" => TokenKind::When,
@@ -400,6 +378,7 @@ impl Lexer {
             (Some('<'), ..) => (TokenKind::Less, 1),
             (Some('>'), ..) => (TokenKind::Greater, 1),
             (Some(','), ..) => (TokenKind::Comma, 1),
+            (Some(':'), ..) => (TokenKind::Colon, 1),
             (Some('('), ..) => (TokenKind::LParen, 1),
             (Some(')'), ..) => (TokenKind::RParen, 1),
             (Some('{'), ..) => (TokenKind::LBrace, 1),

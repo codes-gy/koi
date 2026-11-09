@@ -5,4 +5,4 @@ pub mod lexer;
 pub mod parser;
 
 pub use error::KoiError;
-pub use interpreter::{Interpreter, Value};
+pub use interpreter::{Interpreter, MAX_CALL_DEPTH, STACK_SIZE, Value};
