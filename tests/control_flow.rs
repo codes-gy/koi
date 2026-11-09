@@ -119,8 +119,8 @@ fn loop_variable_is_read_only() {
 }
 
 #[test]
-fn for_requires_a_range() {
-    assert!(error("for (i in 3) print(i)").contains("IntRange"));
+fn for_rejects_values_that_cannot_be_iterated() {
+    assert!(error("for (i in 3) print(i)").contains("Int은(는) 반복할 수 없습니다"));
 }
 
 #[test]

@@ -64,6 +64,8 @@ pub enum TokenKind {
     RParen,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     Newline,
     Eof,
 }
@@ -132,6 +134,8 @@ impl fmt::Display for TokenKind {
             TokenKind::RParen => ")",
             TokenKind::LBrace => "{",
             TokenKind::RBrace => "}",
+            TokenKind::LBracket => "[",
+            TokenKind::RBracket => "]",
         };
         write!(f, "'{symbol}'")
     }
@@ -401,6 +405,8 @@ impl Lexer {
             (Some(')'), ..) => (TokenKind::RParen, 1),
             (Some('{'), ..) => (TokenKind::LBrace, 1),
             (Some('}'), ..) => (TokenKind::RBrace, 1),
+            (Some('['), ..) => (TokenKind::LBracket, 1),
+            (Some(']'), ..) => (TokenKind::RBracket, 1),
             (Some(other), ..) => return Err(self.error(format!("알 수 없는 문자 '{other}'"))),
             (None, ..) => unreachable!("symbol() runs only while input remains"),
         };

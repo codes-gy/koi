@@ -57,6 +57,11 @@ pub enum TypeName {
     Unit,
     Any,
     IntRange,
+    List,
+    MutableList,
+    Map,
+    MutableMap,
+    Pair,
 }
 
 impl TypeName {
@@ -69,22 +74,49 @@ impl TypeName {
             "Unit" => TypeName::Unit,
             "Any" => TypeName::Any,
             "IntRange" => TypeName::IntRange,
+            "List" => TypeName::List,
+            "MutableList" => TypeName::MutableList,
+            "Map" => TypeName::Map,
+            "MutableMap" => TypeName::MutableMap,
+            "Pair" => TypeName::Pair,
             _ => return None,
         })
+    }
+
+    /// How many type arguments Kotlin requires, as in `List<Int>` or `Map<String, Int>`.
+    pub fn arity(self) -> usize {
+        match self {
+            TypeName::List | TypeName::MutableList => 1,
+            TypeName::Map | TypeName::MutableMap | TypeName::Pair => 2,
+            _ => 0,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Named(TypeName),
+    /// Type arguments are kept for messages only. Like Kotlin on the JVM, Koi erases them at runtime.
+    Generic {
+        name: TypeName,
+        args: Vec<Type>,
+    },
     Nullable(Box<Type>),
-    Function { params: Vec<Type>, ret: Box<Type> },
+    Function {
+        params: Vec<Type>,
+        ret: Box<Type>,
+    },
 }
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Type::Named(name) => write!(f, "{name:?}"),
+            Type::Generic { name, args } if args.is_empty() => write!(f, "{name:?}"),
+            Type::Generic { name, args } => {
+                let args: Vec<String> = args.iter().map(Type::to_string).collect();
+                write!(f, "{name:?}<{}>", args.join(", "))
+            }
             Type::Nullable(inner) => write!(f, "{inner}?"),
             Type::Function { params, ret } => {
                 let params: Vec<String> = params.iter().map(Type::to_string).collect();
@@ -116,11 +148,32 @@ pub struct FunctionDecl {
     pub line: usize,
 }
 
+/// A name to bind, or `(a, b)` to unpack a `Pair`, a map entry or a list.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Name(String),
+    Destructure(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LambdaParam {
+    pub pattern: Pattern,
+    pub ty: Option<Type>,
+}
+
 /// `params` is `None` for `{ ... }` without `->`, which may take one value named `it`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lambda {
-    pub params: Option<Vec<Param>>,
+    pub params: Option<Vec<LambdaParam>>,
     pub body: Vec<Stmt>,
+}
+
+/// Kotlin's standard infix functions. `until` parses straight into an exclusive range.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InfixFn {
+    To,
+    DownTo,
+    Step,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,6 +228,15 @@ pub enum Expr {
         safe: bool,
     },
     NotNull(Box<Expr>),
+    Index {
+        object: Box<Expr>,
+        index: Box<Expr>,
+    },
+    Infix {
+        function: InfixFn,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     Elvis {
         left: Box<Expr>,
         right: Box<Expr>,
@@ -216,12 +278,51 @@ pub enum WhenCondition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
-    Declare { name: String, mutable: bool, ty: Option<Type>, value: Expr },
-    Assign { name: String, value: Expr },
+    Declare {
+        name: String,
+        mutable: bool,
+        ty: Option<Type>,
+        value: Expr,
+    },
+    /// `val (a, b) = pair`
+    DeclareParts {
+        names: Vec<String>,
+        mutable: bool,
+        value: Expr,
+    },
+    Assign {
+        target: AssignTarget,
+        value: Expr,
+    },
     Function(Rc<FunctionDecl>),
-    While { condition: Expr, body: Vec<Stmt> },
-    For { variable: String, iterable: Expr, body: Vec<Stmt> },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
+    For {
+        pattern: Pattern,
+        iterable: Expr,
+        body: Vec<Stmt>,
+    },
     Expr(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignTarget {
+    Variable(String),
+    Index { object: Expr, index: Expr },
+}
+
+impl AssignTarget {
+    /// The target read back as an expression, for `x += 1` and `xs[i] += 1`.
+    pub fn to_expr(&self) -> Expr {
+        match self {
+            AssignTarget::Variable(name) => Expr::Variable(name.clone()),
+            AssignTarget::Index { object, index } => {
+                Expr::Index { object: Box::new(object.clone()), index: Box::new(index.clone()) }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

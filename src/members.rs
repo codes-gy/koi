@@ -1,12 +1,12 @@
 //! Properties and methods of built-in types that need no callbacks into the interpreter.
 
-use crate::interpreter::Value;
+use crate::value::Value;
 
 const MAX_STRING_LEN: usize = 100_000_000;
 
-const PROPERTIES: [&str; 3] = ["length", "first", "last"];
+const PROPERTIES: [&str; 1] = ["length"];
 
-const METHODS: [&str; 19] = [
+const METHODS: [&str; 20] = [
     "uppercase",
     "lowercase",
     "trim",
@@ -26,13 +26,12 @@ const METHODS: [&str; 19] = [
     "let",
     "also",
     "takeIf",
+    "split",
 ];
 
 pub(crate) fn property(receiver: &Value, name: &str) -> Result<Value, String> {
     Ok(match (receiver, name) {
         (Value::Str(s), "length") => Value::Int(s.chars().count() as i64),
-        (Value::Range { start, .. }, "first") => Value::Int(*start),
-        (Value::Range { end, .. }, "last") => Value::Int(*end),
         _ if METHODS.contains(&name) => {
             return Err(format!("'{name}'은(는) 함수라서 값.{name}() 처럼 호출해야 합니다"));
         }
@@ -58,6 +57,10 @@ pub(crate) fn method(receiver: &Value, name: &str, args: &[Value]) -> Result<Val
                 return Err("repeat 결과 문자열이 너무 큽니다".to_string());
             }
             Value::Str(s.repeat(times))
+        }
+        // Like Kotlin, consecutive delimiters produce empty strings: "a  b".split(" ") has three parts.
+        (Value::Str(s), "split", [Value::Str(delimiter)]) if !delimiter.is_empty() => {
+            Value::list(s.split(delimiter.as_str()).map(|part| Value::Str(part.to_string())).collect(), false)
         }
         (Value::Str(s), "reversed", []) => Value::Str(s.chars().rev().collect()),
         (Value::Str(s), "toInt", []) => Value::Int(s.parse().map_err(|_| {

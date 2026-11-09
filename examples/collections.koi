@@ -1,0 +1,43 @@
+// 성적 처리: List, Map, 람다를 함께 씁니다
+val 학생들 = listOf(
+    "철수" to 87,
+    "영희" to 95,
+    "민수" to 72,
+    "지은" to 64,
+    "현우" to 91,
+)
+
+fun 등급(점수: Int) = when (점수) {
+    in 90..100 -> "A"
+    in 80..89 -> "B"
+    in 70..79 -> "C"
+    else -> "F"
+}
+
+fun main() {
+    val 평균 = 학생들.map { it.second }.average()
+    println("평균: $평균")
+
+    val 우수 = 학생들
+        .filter { (_, 점수) -> 점수 >= 90 }
+        .sortedByDescending { it.second }
+        .joinToString(", ") { it.first }
+    println("90점 이상: $우수")
+
+    val 등급별 = 학생들.groupBy { 등급(it.second) }
+    for ((등급, 명단) in 등급별) {
+        println("$등급: ${명단.map { it.first }}")
+    }
+
+    // 단어 세기: MutableMap
+    val 문장 = "코틀린 은 즐겁다 코틀린 은 간결하다"
+    val 횟수 = mutableMapOf<String, Int>()
+    for (단어 in 문장.split(" ")) {
+        횟수[단어] = (횟수[단어] ?: 0) + 1
+    }
+    println("단어 수: $횟수")
+
+    // infix 함수: until, downTo, step
+    println((10 downTo 0 step 2).toList())
+    println((0 until 5).map { it * it })
+}

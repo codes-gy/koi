@@ -51,15 +51,19 @@ koi> if (x > 3) {
 | null 안전성 | `String` 에는 null을 넣을 수 없고 `String?` 에만 넣을 수 있습니다. `?.` 안전 호출, `?:` 기본값, `!!` null 아님 단언 |
 | 멤버 | `s.length`, `s.uppercase()`, `s.trim()`, `"42".toIntOrNull()`, `3.9.toInt()`, `x.toString()` 등 |
 | 스코프 함수 | `값?.let { ... }`, `also`, `takeIf { 조건 }` |
-| 타입 | `Int`, `Double`, `Boolean`, `String`, `IntRange`, `Unit`, `Any`, 함수 타입. 매개변수와 반환 타입은 실행할 때 검사합니다 |
+| 타입 | `Int`, `Double`, `Boolean`, `String`, `IntRange`, `Unit`, `Any`, `List<T>`, `MutableList<T>`, `Map<K, V>`, `MutableMap<K, V>`, `Pair<A, B>`, 함수 타입. 매개변수와 반환 타입은 실행할 때 검사합니다 |
 | 산술 | `+ - * / %`. `Int / Int` 는 몫만 남깁니다 (`10 / 4 == 2`) |
 | 대입 | `= += -= *= /= %=` |
 | 비교와 논리 | `== != < <= > >=`, `&& \|\| !` |
 | 문자열 템플릿 | `"안녕, $이름"`, `"합계 ${a + b}"` |
-| 범위 | `1..5` (5 포함), `1..<5` (5 제외), `x in 1..5` |
+| 범위 | `1..5` (5 포함), `1..<5` 와 `0 until 5` (5 제외), `10 downTo 1`, `1..10 step 2`, `x in 1..5` |
+| List | `listOf(1, 2, 3)` 는 읽기 전용, `mutableListOf()` 는 바꿀 수 있습니다. `xs[0]`, `xs.size`, `xs.add(4)`, `xs + ys` |
+| Map | `mapOf("a" to 1)`, `mutableMapOf<String, Int>()`, `m["a"]` (없으면 null), `m.keys`, `m.getOrPut(k) { ... }` |
+| Pair | `"키" to 42`, `p.first`, `p.second`, `val (a, b) = p` |
+| 고차 함수 | `filter`, `map`, `forEach`, `any`, `all`, `count`, `find`, `sumOf`, `sortedBy`, `groupBy`, `fold`, `joinToString` 등 |
 | if 식 | `val 등급 = if (점수 >= 90) "A" else "B"` |
 | when 식 | `when (x) { 1, 2 -> "작음"; in 3..9 -> "중간"; else -> "큼" }` |
-| 반복 | `for (i in 1..10) { }`, `while (조건) { }`, `break`, `continue` |
+| 반복 | `for (x in 리스트)`, `for ((키, 값) in 맵)`, `for ((i, x) in xs.withIndex())`, `while (조건) { }`, `break`, `continue` |
 | 함수 | `fun 더하기(a: Int, b: Int): Int { return a + b }`, 식 본문 `fun 두배(x: Int) = x * 2` |
 | 인자 | 기본값 `fun f(x: Int = 1)`, 이름 붙은 인자 `f(x = 2)` |
 | 람다 | `{ a: Int, b: Int -> a + b }`, 매개변수가 하나면 `{ it * 2 }` |
@@ -82,6 +86,8 @@ koi> if (x > 3) {
 - `src/parser.rs` 는 토큰을 AST로 만듭니다. 연산자 우선순위는 Pratt 파서의 표 하나로 관리합니다.
 - `src/ast.rs` 는 문법 트리를 정의합니다.
 - `src/interpreter.rs` 는 AST를 따라가며 실행합니다. 변수는 서로 연결된 스코프 체인에 저장하고, 함수는 자기가 만들어진 스코프를 기억합니다 (클로저).
+- `src/value.rs` 는 실행 중 값(List, Map, 범위 등)의 정의와 연산자를 담습니다.
+- `src/collections.rs` 는 List, Map, Pair, 범위의 속성과 함수, 인덱스, 반복을 구현합니다.
 - `src/members.rs` 는 `length`, `uppercase()` 처럼 기본 타입에 붙은 속성과 함수를 구현합니다.
 - `src/error.rs` 는 줄 번호가 붙은 오류를 정의합니다. REPL이 여러 줄 입력을 기다릴지도 이 타입으로 판단합니다.
 - `tests/` 에는 언어의 동작을 사용자 입장에서 확인하는 테스트가 있습니다.

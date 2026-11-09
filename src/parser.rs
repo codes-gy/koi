@@ -1,42 +1,52 @@
 use std::rc::Rc;
 
 use crate::ast::{
-    Arg, BinaryOp, Expr, FunctionBody, FunctionDecl, Lambda, LogicalOp, Param, Stmt, StmtKind,
-    TemplatePart, Type, TypeName, UnaryOp, WhenBranch, WhenCondition, WhenPattern,
+    Arg, AssignTarget, BinaryOp, Expr, FunctionBody, FunctionDecl, InfixFn, Lambda, LambdaParam,
+    LogicalOp, Param, Pattern, Stmt, StmtKind, TemplatePart, Type, TypeName, UnaryOp, WhenBranch,
+    WhenCondition, WhenPattern,
 };
 use crate::error::KoiError;
 use crate::lexer::{self, Token, TokenKind};
 
-const PREFIX_BINDING_POWER: u8 = 17;
+const PREFIX_BINDING_POWER: u8 = 110;
 
 enum Infix {
     Binary(BinaryOp),
     Logical(LogicalOp),
     Range { inclusive: bool },
+    Function(InfixFn),
     Elvis,
 }
 
-/// Kotlin's precedence, lowest first. Each level binds tighter than the one above it.
+/// Kotlin's precedence, lowest first. A right operand parses at `left_bp + 1`, so operators on
+/// one level associate to the left.
 fn infix_operator(kind: &TokenKind) -> Option<(Infix, u8)> {
     Some(match kind {
-        TokenKind::OrOr => (Infix::Logical(LogicalOp::Or), 1),
-        TokenKind::AndAnd => (Infix::Logical(LogicalOp::And), 3),
-        TokenKind::EqualEqual => (Infix::Binary(BinaryOp::Eq), 5),
-        TokenKind::BangEqual => (Infix::Binary(BinaryOp::Ne), 5),
-        TokenKind::Less => (Infix::Binary(BinaryOp::Lt), 7),
-        TokenKind::LessEqual => (Infix::Binary(BinaryOp::Le), 7),
-        TokenKind::Greater => (Infix::Binary(BinaryOp::Gt), 7),
-        TokenKind::GreaterEqual => (Infix::Binary(BinaryOp::Ge), 7),
-        TokenKind::In => (Infix::Binary(BinaryOp::In), 9),
-        // Kotlin puts `?:` between named checks (`in`) and ranges.
-        TokenKind::Elvis => (Infix::Elvis, 10),
-        TokenKind::DotDot => (Infix::Range { inclusive: true }, 11),
-        TokenKind::DotDotLess => (Infix::Range { inclusive: false }, 11),
-        TokenKind::Plus => (Infix::Binary(BinaryOp::Add), 13),
-        TokenKind::Minus => (Infix::Binary(BinaryOp::Sub), 13),
-        TokenKind::Star => (Infix::Binary(BinaryOp::Mul), 15),
-        TokenKind::Slash => (Infix::Binary(BinaryOp::Div), 15),
-        TokenKind::Percent => (Infix::Binary(BinaryOp::Rem), 15),
+        TokenKind::OrOr => (Infix::Logical(LogicalOp::Or), 10),
+        TokenKind::AndAnd => (Infix::Logical(LogicalOp::And), 20),
+        TokenKind::EqualEqual => (Infix::Binary(BinaryOp::Eq), 30),
+        TokenKind::BangEqual => (Infix::Binary(BinaryOp::Ne), 30),
+        TokenKind::Less => (Infix::Binary(BinaryOp::Lt), 40),
+        TokenKind::LessEqual => (Infix::Binary(BinaryOp::Le), 40),
+        TokenKind::Greater => (Infix::Binary(BinaryOp::Gt), 40),
+        TokenKind::GreaterEqual => (Infix::Binary(BinaryOp::Ge), 40),
+        TokenKind::In => (Infix::Binary(BinaryOp::In), 50),
+        TokenKind::Elvis => (Infix::Elvis, 60),
+        // Kotlin's named infix functions are ordinary identifiers in operator position.
+        TokenKind::Ident(name) => match name.as_str() {
+            "to" => (Infix::Function(InfixFn::To), 70),
+            "until" => (Infix::Range { inclusive: false }, 70),
+            "downTo" => (Infix::Function(InfixFn::DownTo), 70),
+            "step" => (Infix::Function(InfixFn::Step), 70),
+            _ => return None,
+        },
+        TokenKind::DotDot => (Infix::Range { inclusive: true }, 80),
+        TokenKind::DotDotLess => (Infix::Range { inclusive: false }, 80),
+        TokenKind::Plus => (Infix::Binary(BinaryOp::Add), 90),
+        TokenKind::Minus => (Infix::Binary(BinaryOp::Sub), 90),
+        TokenKind::Star => (Infix::Binary(BinaryOp::Mul), 100),
+        TokenKind::Slash => (Infix::Binary(BinaryOp::Div), 100),
+        TokenKind::Percent => (Infix::Binary(BinaryOp::Rem), 100),
         _ => return None,
     })
 }
@@ -173,6 +183,18 @@ impl<'a> Parser<'a> {
         let kind = match self.peek().clone() {
             TokenKind::Val | TokenKind::Var => {
                 let mutable = self.advance() == TokenKind::Var;
+                if self.at(&TokenKind::LParen) {
+                    let Pattern::Destructure(names) = self.pattern("변수 이름")? else {
+                        unreachable!("a pattern that starts with '(' destructures")
+                    };
+                    self.expect(TokenKind::Equal)?;
+                    self.skip_newlines();
+                    let value = self.expression(0)?;
+                    return Ok(Stmt {
+                        kind: StmtKind::DeclareParts { names, mutable, value },
+                        line,
+                    });
+                }
                 let name = self.identifier("변수 이름")?;
                 let ty = if self.at(&TokenKind::Colon) {
                     self.advance();
@@ -196,33 +218,54 @@ impl<'a> Parser<'a> {
             TokenKind::For => {
                 self.advance();
                 self.expect(TokenKind::LParen)?;
-                let variable = self.identifier("반복 변수 이름")?;
+                let pattern = self.pattern("반복 변수 이름")?;
                 self.expect(TokenKind::In)?;
                 let iterable = self.expression(0)?;
                 self.expect(TokenKind::RParen)?;
-                StmtKind::For { variable, iterable, body: self.loop_body()? }
+                StmtKind::For { pattern, iterable, body: self.loop_body()? }
             }
-            TokenKind::Ident(name) => match assignment_operator(self.peek_next()) {
-                Some(op) => {
-                    self.advance();
-                    self.advance();
-                    self.skip_newlines();
-                    let value = self.expression(0)?;
-                    let value = match op {
-                        None => value,
-                        Some(op) => Expr::Binary {
-                            op,
-                            left: Box::new(Expr::Variable(name.clone())),
-                            right: Box::new(value),
-                        },
-                    };
-                    StmtKind::Assign { name, value }
+            _ => {
+                let expr = self.expression(0)?;
+                match assignment_operator(self.peek()) {
+                    Some(op) => self.assignment(expr, op)?,
+                    None => StmtKind::Expr(expr),
                 }
-                None => StmtKind::Expr(self.expression(0)?),
-            },
-            _ => StmtKind::Expr(self.expression(0)?),
+            }
         };
         Ok(Stmt { kind, line })
+    }
+
+    fn assignment(&mut self, target: Expr, op: Option<BinaryOp>) -> Result<StmtKind, KoiError> {
+        let target = match target {
+            Expr::Variable(name) => AssignTarget::Variable(name),
+            Expr::Index { object, index } => AssignTarget::Index { object: *object, index: *index },
+            _ => return Err(self.error("'=' 왼쪽에는 변수나 xs[i] 같은 원소만 올 수 있습니다")),
+        };
+        self.advance();
+        self.skip_newlines();
+        let value = self.expression(0)?;
+        let value = match op {
+            None => value,
+            Some(op) => {
+                Expr::Binary { op, left: Box::new(target.to_expr()), right: Box::new(value) }
+            }
+        };
+        Ok(StmtKind::Assign { target, value })
+    }
+
+    /// `name`, or `(a, b)` to unpack a pair, map entry or list. `_` skips a position.
+    fn pattern(&mut self, what: &str) -> Result<Pattern, KoiError> {
+        if !self.at(&TokenKind::LParen) {
+            return Ok(Pattern::Name(self.identifier(what)?));
+        }
+        self.advance();
+        let mut names = vec![self.identifier(what)?];
+        while self.at(&TokenKind::Comma) {
+            self.advance();
+            names.push(self.identifier(what)?);
+        }
+        self.expect(TokenKind::RParen)?;
+        Ok(Pattern::Destructure(names))
     }
 
     fn parenthesized(&mut self) -> Result<Expr, KoiError> {
@@ -302,6 +345,7 @@ impl<'a> Parser<'a> {
                     Expr::Range { start: left_box, end: right, inclusive }
                 }
                 Infix::Elvis => Expr::Elvis { left: left_box, right },
+                Infix::Function(function) => Expr::Infix { function, left: left_box, right },
             };
         }
         Ok(left)
@@ -384,7 +428,18 @@ impl<'a> Parser<'a> {
             if self.newlines_then(&[TokenKind::Dot, TokenKind::SafeDot]) {
                 self.skip_newlines();
             }
+            if matches!(expr, Expr::Variable(_)) && self.at(&TokenKind::Less) {
+                self.skip_type_arguments();
+            }
             match self.peek() {
+                TokenKind::LBracket => {
+                    self.advance();
+                    self.skip_newlines();
+                    let index = self.expression(0)?;
+                    self.skip_newlines();
+                    self.expect(TokenKind::RBracket)?;
+                    expr = Expr::Index { object: Box::new(expr), index: Box::new(index) };
+                }
                 TokenKind::LParen => {
                     self.advance();
                     let mut args = self.arguments()?;
@@ -411,6 +466,26 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Ok(expr),
             }
+        }
+    }
+
+    /// `listOf<Int>()` passes type arguments that Koi does not need at runtime. They are skipped
+    /// only when a type list closed by `>` is followed by `(`; otherwise `<` stays a comparison.
+    fn skip_type_arguments(&mut self) {
+        let start = self.pos;
+        self.advance();
+        let parsed = (|| {
+            loop {
+                self.parse_type()?;
+                if !self.at(&TokenKind::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+            self.expect(TokenKind::Greater)
+        })();
+        if parsed.is_err() || !self.at(&TokenKind::LParen) {
+            self.pos = start;
         }
     }
 
@@ -521,14 +596,43 @@ impl<'a> Parser<'a> {
         }
         let line = self.line();
         let name = self.identifier("타입 이름")?;
-        let ty = TypeName::parse(&name).map(Type::Named).ok_or_else(|| {
+        let type_name = TypeName::parse(&name).ok_or_else(|| {
             KoiError::new(
                 line,
                 format!(
-                    "알 수 없는 타입 '{name}'. 쓸 수 있는 타입: Int, Double, Boolean, String, Unit, Any, IntRange, (Int) -> Int"
+                    "알 수 없는 타입 '{name}'. 쓸 수 있는 타입: Int, Double, Boolean, String, Unit, Any, IntRange, List<T>, MutableList<T>, Map<K, V>, MutableMap<K, V>, Pair<A, B>, (Int) -> Int"
                 ),
             )
         })?;
+        let ty = match type_name.arity() {
+            0 => Type::Named(type_name),
+            arity => {
+                if !self.at(&TokenKind::Less) {
+                    let example = if arity == 1 { "<Int>" } else { "<String, Int>" };
+                    return Err(KoiError::new(
+                        line,
+                        format!("{name}에는 원소 타입이 필요합니다. 예: {name}{example}"),
+                    ));
+                }
+                self.advance();
+                let mut args = vec![self.parse_type()?];
+                while self.at(&TokenKind::Comma) {
+                    self.advance();
+                    args.push(self.parse_type()?);
+                }
+                self.expect(TokenKind::Greater)?;
+                if args.len() != arity {
+                    return Err(KoiError::new(
+                        line,
+                        format!(
+                            "{name}에는 타입 인자가 {arity}개 필요합니다 (실제: {}개)",
+                            args.len()
+                        ),
+                    ));
+                }
+                Type::Generic { name: type_name, args }
+            }
+        };
         if self.at(&TokenKind::Question) {
             self.advance();
             return Ok(Type::Nullable(Box::new(ty)));
@@ -550,18 +654,18 @@ impl<'a> Parser<'a> {
         Ok(Expr::Lambda(Rc::new(Lambda { params, body })))
     }
 
-    fn lambda_parameters(&mut self) -> Result<Vec<Param>, KoiError> {
+    fn lambda_parameters(&mut self) -> Result<Vec<LambdaParam>, KoiError> {
         self.skip_newlines();
         let mut params = Vec::new();
         loop {
-            let name = self.identifier("람다 매개변수 이름")?;
+            let pattern = self.pattern("람다 매개변수 이름")?;
             let ty = if self.at(&TokenKind::Colon) {
                 self.advance();
                 Some(self.parse_type()?)
             } else {
                 None
             };
-            params.push(Param { name, ty, default: None });
+            params.push(LambdaParam { pattern, ty });
             if !self.at(&TokenKind::Comma) {
                 self.expect(TokenKind::Arrow)?;
                 return Ok(params);

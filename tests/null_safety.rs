@@ -208,3 +208,10 @@ fn elvis_and_logic_can_start_the_next_line() {
 fn a_line_starting_with_minus_is_a_new_statement() {
     assert_eq!(value("val a = 1\n-5"), "-5");
 }
+
+#[test]
+fn split_keeps_empty_parts_like_kotlin() {
+    assert_eq!(value("\"a,b,,c\".split(\",\")"), "[a, b, , c]");
+    assert_eq!(value("\"코틀린 은 즐겁다\".split(\" \").size"), "3");
+    assert!(error("\"abc\".split(\"\")").contains("split"));
+}
