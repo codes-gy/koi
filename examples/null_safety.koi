@@ -1,0 +1,41 @@
+// String에는 null을 넣을 수 없고, String?에만 넣을 수 있습니다
+var 별명: String? = null
+println("별명 길이: ${별명?.length ?: 0}")      // ?. 는 null이면 null, ?: 는 기본값
+별명 = "코이"
+println("별명 길이: ${별명?.length ?: 0}")
+
+// 실패할 수 있는 변환은 null을 돌려줍니다
+fun 나이를_읽기(입력: String): String {
+    val 나이 = 입력.trim().toIntOrNull() ?: return "'$입력'은(는) 숫자가 아닙니다"
+    return when (나이) {
+        in 0..12 -> "어린이"
+        in 13..19 -> "청소년"
+        else -> "성인"
+    }
+}
+
+// null이 아닐 때만 실행: ?.let
+fun 인사(이름: String?) {
+    이름?.let { println("안녕, $it!") }
+}
+
+fun main() {
+    for (입력 in 0..<4) {
+        val 텍스트 = when (입력) {
+            0 -> "15"
+            1 -> " 42 "
+            2 -> "열다섯"
+            else -> "7"
+        }
+        println(나이를_읽기(텍스트))
+    }
+
+    인사("철수")
+    인사(null)       // 아무것도 출력하지 않습니다
+
+    val 점수 = "85".toIntOrNull()
+        ?.takeIf { it >= 60 }
+        ?.let { "합격 (${it}점)" }
+        ?: "불합격"
+    println(점수)
+}

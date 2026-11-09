@@ -77,6 +77,7 @@ impl TypeName {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Named(TypeName),
+    Nullable(Box<Type>),
     Function { params: Vec<Type>, ret: Box<Type> },
 }
 
@@ -84,6 +85,7 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Type::Named(name) => write!(f, "{name:?}"),
+            Type::Nullable(inner) => write!(f, "{inner}?"),
             Type::Function { params, ret } => {
                 let params: Vec<String> = params.iter().map(Type::to_string).collect();
                 write!(f, "({}) -> {ret}", params.join(", "))
@@ -135,21 +137,62 @@ pub enum TemplatePart {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
+    Null,
     Int(i64),
     Double(f64),
     Bool(bool),
     Str(String),
     Template(Vec<TemplatePart>),
     Variable(String),
-    Unary { op: UnaryOp, operand: Box<Expr> },
-    Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
-    Logical { op: LogicalOp, left: Box<Expr>, right: Box<Expr> },
-    Range { start: Box<Expr>, end: Box<Expr>, inclusive: bool },
-    Call { callee: Box<Expr>, args: Vec<Arg> },
+    Unary {
+        op: UnaryOp,
+        operand: Box<Expr>,
+    },
+    Binary {
+        op: BinaryOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Logical {
+        op: LogicalOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        inclusive: bool,
+    },
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Arg>,
+    },
     Lambda(Rc<Lambda>),
+    /// `object.name`, or `object?.name` when `safe`. A call on it is a method call.
+    Member {
+        object: Box<Expr>,
+        name: String,
+        safe: bool,
+    },
+    NotNull(Box<Expr>),
+    Elvis {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    /// Like Kotlin, these are expressions, so `x ?: return` and `x ?: continue` work.
+    Return(Option<Box<Expr>>),
+    Break,
+    Continue,
     Block(Vec<Stmt>),
-    If { condition: Box<Expr>, then_branch: Box<Expr>, else_branch: Option<Box<Expr>> },
-    When { subject: Option<Box<Expr>>, branches: Vec<WhenBranch> },
+    If {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
+    },
+    When {
+        subject: Option<Box<Expr>>,
+        branches: Vec<WhenBranch>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,14 +216,11 @@ pub enum WhenCondition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
-    Declare { name: String, mutable: bool, value: Expr },
+    Declare { name: String, mutable: bool, ty: Option<Type>, value: Expr },
     Assign { name: String, value: Expr },
     Function(Rc<FunctionDecl>),
-    Return(Option<Expr>),
     While { condition: Expr, body: Vec<Stmt> },
     For { variable: String, iterable: Expr, body: Vec<Stmt> },
-    Break,
-    Continue,
     Expr(Expr),
 }
 

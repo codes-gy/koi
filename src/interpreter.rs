@@ -10,6 +10,7 @@ use crate::ast::{
     Type, TypeName, UnaryOp, WhenCondition, WhenPattern,
 };
 use crate::error::KoiError;
+use crate::members;
 
 /// Runaway recursion must end as a Koi error, not a native stack overflow that kills the process.
 /// Measured with a one-line recursive function: about 19.4 KB of Rust stack per Koi call in debug
@@ -22,6 +23,7 @@ const BUILTINS: [&str; 3] = ["print", "println", "repeat"];
 
 #[derive(Clone)]
 pub enum Value {
+    Null,
     Unit,
     Int(i64),
     Double(f64),
@@ -63,6 +65,7 @@ impl Function {
 impl Value {
     pub fn type_name(&self) -> &'static str {
         match self {
+            Value::Null => "null",
             Value::Unit => "Unit",
             Value::Int(_) => "Int",
             Value::Double(_) => "Double",
@@ -83,6 +86,9 @@ impl Value {
 
     fn is_type(&self, ty: &Type) -> bool {
         match (ty, self) {
+            (Type::Nullable(_), Value::Null) => true,
+            (Type::Nullable(inner), value) => value.is_type(inner),
+            (_, Value::Null) => false,
             (Type::Named(TypeName::Any), _) => true,
             (Type::Named(name), value) => format!("{name:?}") == value.type_name(),
             (Type::Function { params, .. }, Value::Function(function)) => {
@@ -96,7 +102,7 @@ impl Value {
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Unit, Value::Unit) => true,
+            (Value::Null, Value::Null) | (Value::Unit, Value::Unit) => true,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Double(a), Value::Double(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
@@ -113,6 +119,7 @@ impl PartialEq for Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Value::Null => write!(f, "null"),
             Value::Unit => write!(f, "Unit"),
             Value::Int(n) => write!(f, "{n}"),
             Value::Double(n) if n.is_nan() => write!(f, "NaN"),
@@ -140,6 +147,34 @@ impl fmt::Debug for Value {
 struct Binding {
     value: Value,
     mutable: bool,
+    /// Declared, or inferred from the first value like Kotlin. `None` skips the check.
+    ty: Option<Type>,
+}
+
+/// Kotlin infers a variable's type from its initializer; `var n = 1` cannot later hold `"a"`.
+fn inferred_type(name: &str, value: &Value) -> Flow<Option<Type>> {
+    let name_of = |type_name| Ok(Some(Type::Named(type_name)));
+    match value {
+        Value::Null => fail(format!(
+            "'{name}'을(를) null로 시작하려면 타입을 적으세요. 예: var {name}: String? = null"
+        )),
+        Value::Unit => name_of(TypeName::Unit),
+        Value::Int(_) => name_of(TypeName::Int),
+        Value::Double(_) => name_of(TypeName::Double),
+        Value::Bool(_) => name_of(TypeName::Boolean),
+        Value::Str(_) => name_of(TypeName::String),
+        Value::Range { .. } => name_of(TypeName::IntRange),
+        Value::Function(_) => Ok(None),
+    }
+}
+
+fn type_mismatch(name: &str, ty: &Type, value: &Value) -> String {
+    match value {
+        Value::Null => format!(
+            "'{name}'은(는) {ty} 타입이라 null을 담을 수 없습니다. null을 허용하려면 {ty}? 로 선언하세요"
+        ),
+        _ => format!("'{name}'은(는) {ty} 타입이라 {} 값을 담을 수 없습니다", value.type_name()),
+    }
 }
 
 /// Scopes form a chain to the global scope. Functions keep the scope they were created in,
@@ -242,9 +277,14 @@ impl Interpreter {
 
     fn execute_kind(&mut self, kind: &StmtKind, out: &mut dyn Write) -> Flow<Value> {
         match kind {
-            StmtKind::Declare { name, mutable, value } => {
+            StmtKind::Declare { name, mutable, ty, value } => {
                 let value = self.eval(value, out)?;
-                self.declare(name, value, *mutable)?;
+                let ty = match ty {
+                    Some(ty) if !value.is_type(ty) => return fail(type_mismatch(name, ty, &value)),
+                    Some(ty) => Some(ty.clone()),
+                    None => inferred_type(name, &value)?,
+                };
+                self.declare_binding(name, Binding { value, mutable: *mutable, ty })?;
                 Ok(Value::Unit)
             }
             StmtKind::Assign { name, value } => {
@@ -257,13 +297,6 @@ impl Interpreter {
                     Function { code: Code::Named(decl.clone()), closure: self.env.clone() };
                 self.declare(&decl.name, Value::Function(Rc::new(function)), false)?;
                 Ok(Value::Unit)
-            }
-            StmtKind::Return(value) => {
-                let value = match value {
-                    Some(value) => self.eval(value, out)?,
-                    None => Value::Unit,
-                };
-                Err(Interrupt::Return(value))
             }
             StmtKind::While { condition, body } => {
                 while self.condition(condition, out)? {
@@ -303,18 +336,20 @@ impl Interpreter {
                 }
                 Ok(Value::Unit)
             }
-            StmtKind::Break => Err(Interrupt::Break),
-            StmtKind::Continue => Err(Interrupt::Continue),
             StmtKind::Expr(expr) => self.eval(expr, out),
         }
     }
 
     fn declare(&mut self, name: &str, value: Value, mutable: bool) -> Flow<()> {
+        self.declare_binding(name, Binding { value, mutable, ty: None })
+    }
+
+    fn declare_binding(&mut self, name: &str, binding: Binding) -> Flow<()> {
         let mut scope = self.env.borrow_mut();
         if scope.vars.contains_key(name) {
             return fail(format!("'{name}'은(는) 이미 선언되어 있습니다"));
         }
-        scope.vars.insert(name.to_string(), Binding { value, mutable });
+        scope.vars.insert(name.to_string(), binding);
         Ok(())
     }
 
@@ -327,6 +362,11 @@ impl Interpreter {
                     return fail(format!(
                         "'{name}'은(는) val이라 다시 할당할 수 없습니다. 바꿀 값이라면 var로 선언하세요"
                     ));
+                }
+                if let Some(ty) = &binding.ty
+                    && !value.is_type(ty)
+                {
+                    return fail(type_mismatch(name, ty, &value));
                 }
                 binding.value = value;
                 return Ok(());
@@ -381,6 +421,7 @@ impl Interpreter {
 
     fn eval(&mut self, expr: &Expr, out: &mut dyn Write) -> Flow<Value> {
         match expr {
+            Expr::Null => Ok(Value::Null),
             Expr::Int(n) => Ok(Value::Int(*n)),
             Expr::Double(n) => Ok(Value::Double(*n)),
             Expr::Bool(b) => Ok(Value::Bool(*b)),
@@ -428,6 +469,18 @@ impl Interpreter {
                     None => Value::Range { start: 0, end: -1 },
                 })
             }
+            Expr::Call { callee, args } if matches!(callee.as_ref(), Expr::Member { .. }) => {
+                let Expr::Member { object, name, safe } = callee.as_ref() else { unreachable!() };
+                let receiver = self.eval(object, out)?;
+                if *safe && receiver == Value::Null {
+                    return Ok(Value::Null);
+                }
+                let args = args
+                    .iter()
+                    .map(|arg| Ok((arg.name.clone(), self.eval(&arg.value, out)?)))
+                    .collect::<Flow<Args>>()?;
+                self.call_method(receiver, name, args, out)
+            }
             Expr::Call { callee, args } => {
                 let args = args
                     .iter()
@@ -453,6 +506,28 @@ impl Interpreter {
                 code: Code::Lambda(lambda.clone()),
                 closure: self.env.clone(),
             }))),
+            Expr::Member { object, name, safe } => match self.eval(object, out)? {
+                Value::Null if *safe => Ok(Value::Null),
+                Value::Null => fail(null_receiver(name)),
+                receiver => members::property(&receiver, name).or_else(fail),
+            },
+            Expr::NotNull(inner) => match self.eval(inner, out)? {
+                Value::Null => fail("null인 값에 !!를 썼습니다 (NullPointerException)"),
+                value => Ok(value),
+            },
+            Expr::Elvis { left, right } => match self.eval(left, out)? {
+                Value::Null => self.eval(right, out),
+                value => Ok(value),
+            },
+            Expr::Return(value) => {
+                let value = match value {
+                    Some(value) => self.eval(value, out)?,
+                    None => Value::Unit,
+                };
+                Err(Interrupt::Return(value))
+            }
+            Expr::Break => Err(Interrupt::Break),
+            Expr::Continue => Err(Interrupt::Continue),
             Expr::Block(stmts) => self.block(stmts, out),
             Expr::If { condition, then_branch, else_branch } => {
                 if self.condition(condition, out)? {
@@ -610,8 +685,12 @@ impl Interpreter {
             if let Some(ty) = &param.ty
                 && !value.is_type(ty)
             {
+                let hint = match value {
+                    Value::Null => format!(". null을 허용하려면 {ty}? 로 선언하세요"),
+                    _ => String::new(),
+                };
                 return fail(format!(
-                    "'{name}'의 매개변수 '{}'에는 {ty}가 와야 합니다 (실제: {})",
+                    "'{name}'의 매개변수 '{}'에는 {ty}가 와야 합니다 (실제: {}){hint}",
                     param.name,
                     value.type_name()
                 ));
@@ -662,6 +741,40 @@ impl Interpreter {
         self.statements(&lambda.body, out)
     }
 
+    /// Scope functions call back into Koi, so they live here; the rest is in `members`.
+    fn call_method(
+        &mut self,
+        receiver: Value,
+        name: &str,
+        args: Args,
+        out: &mut dyn Write,
+    ) -> Flow<Value> {
+        if args.iter().any(|(arg_name, _)| arg_name.is_some()) {
+            return fail(format!("{name}에는 이름 붙은 인자를 쓸 수 없습니다"));
+        }
+        let values: Vec<Value> = args.into_iter().map(|(_, value)| value).collect();
+        match (name, values.as_slice()) {
+            ("let", [Value::Function(block)]) => self.call(block, vec![(None, receiver)], out),
+            ("also", [Value::Function(block)]) => {
+                self.call(block, vec![(None, receiver.clone())], out)?;
+                Ok(receiver)
+            }
+            ("takeIf", [Value::Function(predicate)]) => {
+                match self.call(predicate, vec![(None, receiver.clone())], out)? {
+                    Value::Bool(true) => Ok(receiver),
+                    Value::Bool(false) => Ok(Value::Null),
+                    other => fail(format!(
+                        "takeIf의 람다는 Boolean을 돌려줘야 합니다 (실제: {})",
+                        other.type_name()
+                    )),
+                }
+            }
+            ("toString", []) => Ok(Value::Str(receiver.to_string())),
+            _ if receiver == Value::Null => fail(null_receiver(name)),
+            _ => members::method(&receiver, name, &values).or_else(fail),
+        }
+    }
+
     fn call_builtin(&mut self, name: &str, args: Args, out: &mut dyn Write) -> Flow<Value> {
         if args.iter().any(|(arg_name, _)| arg_name.is_some()) {
             return fail(format!("{name}에는 이름 붙은 인자를 쓸 수 없습니다"));
@@ -684,6 +797,12 @@ impl Interpreter {
             _ => unreachable!("only names in BUILTINS reach call_builtin"),
         }
     }
+}
+
+fn null_receiver(name: &str) -> String {
+    format!(
+        "null에서는 '{name}'을(를) 쓸 수 없습니다. 값?.{name} 처럼 ?.를 쓰거나 null인지 먼저 확인하세요"
+    )
 }
 
 fn write(out: &mut dyn Write, text: &str) -> Flow<Value> {
@@ -729,6 +848,10 @@ fn binary(op: BinaryOp, left: Value, right: Value) -> Flow<Value> {
                 _ => unreachable!("comparison operators are handled above"),
             }))
         }
+        _ if left == Value::Null || right == Value::Null => fail(format!(
+            "null에는 '{}' 연산을 쓸 수 없습니다. ?: 로 기본값을 정하거나 null인지 먼저 확인하세요",
+            op.symbol()
+        )),
         _ => fail(format!(
             "{} {} {} 연산은 할 수 없습니다",
             left.type_name(),

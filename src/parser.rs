@@ -13,6 +13,7 @@ enum Infix {
     Binary(BinaryOp),
     Logical(LogicalOp),
     Range { inclusive: bool },
+    Elvis,
 }
 
 /// Kotlin's precedence, lowest first. Each level binds tighter than the one above it.
@@ -27,6 +28,8 @@ fn infix_operator(kind: &TokenKind) -> Option<(Infix, u8)> {
         TokenKind::Greater => (Infix::Binary(BinaryOp::Gt), 7),
         TokenKind::GreaterEqual => (Infix::Binary(BinaryOp::Ge), 7),
         TokenKind::In => (Infix::Binary(BinaryOp::In), 9),
+        // Kotlin puts `?:` between named checks (`in`) and ranges.
+        TokenKind::Elvis => (Infix::Elvis, 10),
         TokenKind::DotDot => (Infix::Range { inclusive: true }, 11),
         TokenKind::DotDotLess => (Infix::Range { inclusive: false }, 11),
         TokenKind::Plus => (Infix::Binary(BinaryOp::Add), 13),
@@ -171,32 +174,19 @@ impl<'a> Parser<'a> {
             TokenKind::Val | TokenKind::Var => {
                 let mutable = self.advance() == TokenKind::Var;
                 let name = self.identifier("변수 이름")?;
+                let ty = if self.at(&TokenKind::Colon) {
+                    self.advance();
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
                 self.expect(TokenKind::Equal)?;
                 self.skip_newlines();
-                StmtKind::Declare { name, mutable, value: self.expression(0)? }
+                StmtKind::Declare { name, mutable, ty, value: self.expression(0)? }
             }
             TokenKind::Fun => {
                 self.advance();
                 StmtKind::Function(Rc::new(self.function_declaration(line)?))
-            }
-            TokenKind::Return => {
-                match self.function {
-                    FunctionContext::Fun => {}
-                    FunctionContext::Lambda => {
-                        return Err(self.error(
-                            "람다 안에서는 return을 쓸 수 없습니다. 람다는 마지막 식의 값을 돌려줍니다",
-                        ));
-                    }
-                    FunctionContext::TopLevel => {
-                        return Err(self.error("return은 fun 안에서만 쓸 수 있습니다"));
-                    }
-                }
-                self.advance();
-                let ends_here = matches!(
-                    self.peek(),
-                    TokenKind::Newline | TokenKind::RBrace | TokenKind::Else | TokenKind::Eof
-                );
-                StmtKind::Return(if ends_here { None } else { Some(self.expression(0)?) })
             }
             TokenKind::While => {
                 self.advance();
@@ -211,15 +201,6 @@ impl<'a> Parser<'a> {
                 let iterable = self.expression(0)?;
                 self.expect(TokenKind::RParen)?;
                 StmtKind::For { variable, iterable, body: self.loop_body()? }
-            }
-            keyword @ (TokenKind::Break | TokenKind::Continue) => {
-                if self.loop_depth == 0 {
-                    return Err(
-                        self.error(format!("{keyword}은(는) 반복문 안에서만 쓸 수 있습니다"))
-                    );
-                }
-                self.advance();
-                if keyword == TokenKind::Break { StmtKind::Break } else { StmtKind::Continue }
             }
             TokenKind::Ident(name) => match assignment_operator(self.peek_next()) {
                 Some(op) => {
@@ -300,7 +281,13 @@ impl<'a> Parser<'a> {
     fn expression(&mut self, min_bp: u8) -> Result<Expr, KoiError> {
         let prefix = self.prefix()?;
         let mut left = self.postfix(prefix)?;
-        while let Some((infix, left_bp)) = infix_operator(self.peek()) {
+        loop {
+            // Kotlin allows a line break before `?:`, `&&` and `||`, but not before `+` or `-`,
+            // because a line starting with `-x` is a new statement.
+            if self.newlines_then(&[TokenKind::Elvis, TokenKind::AndAnd, TokenKind::OrOr]) {
+                self.skip_newlines();
+            }
+            let Some((infix, left_bp)) = infix_operator(self.peek()) else { break };
             if left_bp < min_bp {
                 break;
             }
@@ -314,6 +301,7 @@ impl<'a> Parser<'a> {
                 Infix::Range { inclusive } => {
                     Expr::Range { start: left_box, end: right, inclusive }
                 }
+                Infix::Elvis => Expr::Elvis { left: left_box, right },
             };
         }
         Ok(left)
@@ -322,6 +310,7 @@ impl<'a> Parser<'a> {
     fn prefix(&mut self) -> Result<Expr, KoiError> {
         let line = self.line();
         Ok(match self.advance() {
+            TokenKind::Null => Expr::Null,
             TokenKind::Int(n) => Expr::Int(n),
             TokenKind::Double(n) => Expr::Double(n),
             TokenKind::True => Expr::Bool(true),
@@ -339,6 +328,39 @@ impl<'a> Parser<'a> {
                 inner
             }
             TokenKind::LBrace => self.lambda()?,
+            TokenKind::Return => {
+                match self.function {
+                    FunctionContext::Fun => {}
+                    FunctionContext::Lambda => {
+                        return Err(KoiError::new(
+                            line,
+                            "람다 안에서는 return을 쓸 수 없습니다. 람다는 마지막 식의 값을 돌려줍니다",
+                        ));
+                    }
+                    FunctionContext::TopLevel => {
+                        return Err(KoiError::new(line, "return은 fun 안에서만 쓸 수 있습니다"));
+                    }
+                }
+                let ends_here = matches!(
+                    self.peek(),
+                    TokenKind::Newline
+                        | TokenKind::RBrace
+                        | TokenKind::RParen
+                        | TokenKind::Comma
+                        | TokenKind::Else
+                        | TokenKind::Eof
+                );
+                Expr::Return(if ends_here { None } else { Some(Box::new(self.expression(0)?)) })
+            }
+            keyword @ (TokenKind::Break | TokenKind::Continue) => {
+                if self.loop_depth == 0 {
+                    return Err(KoiError::new(
+                        line,
+                        format!("{keyword}은(는) 반복문 안에서만 쓸 수 있습니다"),
+                    ));
+                }
+                if keyword == TokenKind::Break { Expr::Break } else { Expr::Continue }
+            }
             TokenKind::If => self.if_expression()?,
             TokenKind::When => self.when_expression()?,
             TokenKind::Eof => return Err(KoiError::incomplete(line, "식이 끝나지 않았습니다")),
@@ -355,25 +377,50 @@ impl<'a> Parser<'a> {
         Ok(Expr::Unary { op, operand: Box::new(self.expression(PREFIX_BINDING_POWER)?) })
     }
 
-    /// Calls bind tighter than any operator: `f(1)`, `make()(2)`, `repeat(3) { ... }`, `run { ... }`.
+    /// Calls, member access and `!!` bind tighter than any operator:
+    /// `f(1)`, `make()(2)`, `repeat(3) { ... }`, `s?.length`, `x!!`.
     fn postfix(&mut self, mut expr: Expr) -> Result<Expr, KoiError> {
         loop {
-            if self.at(&TokenKind::LParen) {
-                self.advance();
-                let mut args = self.arguments()?;
-                if self.at(&TokenKind::LBrace) {
+            if self.newlines_then(&[TokenKind::Dot, TokenKind::SafeDot]) {
+                self.skip_newlines();
+            }
+            match self.peek() {
+                TokenKind::LParen => {
                     self.advance();
-                    args.push(Arg { name: None, value: self.lambda()? });
+                    let mut args = self.arguments()?;
+                    if self.at(&TokenKind::LBrace) {
+                        self.advance();
+                        args.push(Arg { name: None, value: self.lambda()? });
+                    }
+                    expr = Expr::Call { callee: Box::new(expr), args };
                 }
-                expr = Expr::Call { callee: Box::new(expr), args };
-            } else if self.at(&TokenKind::LBrace) && matches!(expr, Expr::Variable(_)) {
-                self.advance();
-                let args = vec![Arg { name: None, value: self.lambda()? }];
-                expr = Expr::Call { callee: Box::new(expr), args };
-            } else {
-                return Ok(expr);
+                TokenKind::LBrace if matches!(expr, Expr::Variable(_) | Expr::Member { .. }) => {
+                    self.advance();
+                    let args = vec![Arg { name: None, value: self.lambda()? }];
+                    expr = Expr::Call { callee: Box::new(expr), args };
+                }
+                TokenKind::Dot | TokenKind::SafeDot => {
+                    let safe = self.advance() == TokenKind::SafeDot;
+                    self.skip_newlines();
+                    let name = self.identifier("속성이나 함수 이름")?;
+                    expr = Expr::Member { object: Box::new(expr), name, safe };
+                }
+                TokenKind::BangBang => {
+                    self.advance();
+                    expr = Expr::NotNull(Box::new(expr));
+                }
+                _ => return Ok(expr),
             }
         }
+    }
+
+    /// Whether the next line continues this expression by starting with one of `kinds`.
+    fn newlines_then(&self, kinds: &[TokenKind]) -> bool {
+        let mut i = self.pos;
+        while self.tokens[i].kind == TokenKind::Newline {
+            i += 1;
+        }
+        i > self.pos && kinds.contains(&self.tokens[i].kind)
     }
 
     fn arguments(&mut self) -> Result<Vec<Arg>, KoiError> {
@@ -474,14 +521,19 @@ impl<'a> Parser<'a> {
         }
         let line = self.line();
         let name = self.identifier("타입 이름")?;
-        TypeName::parse(&name).map(Type::Named).ok_or_else(|| {
+        let ty = TypeName::parse(&name).map(Type::Named).ok_or_else(|| {
             KoiError::new(
                 line,
                 format!(
                     "알 수 없는 타입 '{name}'. 쓸 수 있는 타입: Int, Double, Boolean, String, Unit, Any, IntRange, (Int) -> Int"
                 ),
             )
-        })
+        })?;
+        if self.at(&TokenKind::Question) {
+            self.advance();
+            return Ok(Type::Nullable(Box::new(ty)));
+        }
+        Ok(ty)
     }
 
     /// Called after `{`. `{ a, b -> ... }` names its parameters; `{ ... }` alone may use `it`.
