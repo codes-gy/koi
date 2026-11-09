@@ -1,6 +1,8 @@
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
+use koi::{Interpreter, Value};
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
@@ -15,19 +17,21 @@ fn main() -> ExitCode {
 
 fn repl() -> ExitCode {
     println!("Koi {} (종료: Ctrl+D)", env!("CARGO_PKG_VERSION"));
+    let mut interpreter = Interpreter::new();
     let stdin = io::stdin();
+    let mut stdout = io::stdout();
     loop {
         print!("koi> ");
-        io::stdout().flush().ok();
+        stdout.flush().ok();
         let mut line = String::new();
         match stdin.lock().read_line(&mut line) {
             Ok(0) => {
                 println!();
                 return ExitCode::SUCCESS;
             }
-            Ok(_) if line.trim().is_empty() => continue,
-            Ok(_) => match koi::run(&line) {
-                Ok(output) => println!("{output}"),
+            Ok(_) => match interpreter.run(&line, &mut stdout) {
+                Ok(Value::Nil) => {}
+                Ok(value) => println!("{value}"),
                 Err(err) => eprintln!("오류: {err}"),
             },
             Err(err) => {
@@ -46,18 +50,11 @@ fn run_file(path: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    for (number, line) in source.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        match koi::run(line) {
-            Ok(output) => println!("{output}"),
-            Err(err) => {
-                eprintln!("{path}:{}: 오류: {err}", number + 1);
-                return ExitCode::FAILURE;
-            }
+    match Interpreter::new().run(&source, &mut io::stdout()) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("{path}: {err}");
+            ExitCode::FAILURE
         }
     }
-    ExitCode::SUCCESS
 }
