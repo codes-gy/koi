@@ -20,8 +20,9 @@ fn repl() -> ExitCode {
     let mut interpreter = Interpreter::new();
     let stdin = io::stdin();
     let mut stdout = io::stdout();
+    let mut pending = String::new();
     loop {
-        print!("koi> ");
+        print!("{}", if pending.is_empty() { "koi> " } else { "...  " });
         stdout.flush().ok();
         let mut line = String::new();
         match stdin.lock().read_line(&mut line) {
@@ -29,16 +30,21 @@ fn repl() -> ExitCode {
                 println!();
                 return ExitCode::SUCCESS;
             }
-            Ok(_) => match interpreter.run(&line, &mut stdout) {
-                Ok(Value::Nil) => {}
-                Ok(value) => println!("{value}"),
-                Err(err) => eprintln!("오류: {err}"),
-            },
+            Ok(_) => {}
             Err(err) => {
                 eprintln!("입력 오류: {err}");
                 return ExitCode::FAILURE;
             }
         }
+        let give_up_waiting = !pending.is_empty() && line.trim().is_empty();
+        pending.push_str(&line);
+        match interpreter.run(&pending, &mut stdout) {
+            Err(err) if err.is_incomplete() && !give_up_waiting => continue,
+            Ok(Value::Unit) => {}
+            Ok(value) => println!("{value}"),
+            Err(err) => eprintln!("오류: {err}"),
+        }
+        pending.clear();
     }
 }
 

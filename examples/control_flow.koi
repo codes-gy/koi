@@ -1,0 +1,39 @@
+// if는 값을 돌려주는 식입니다
+val 점수 = 87
+val 등급 = if (점수 >= 90) "A" else if (점수 >= 80) "B" else "C"
+println("점수 $점수 → 등급 $등급")
+
+// when (값) 과 in 범위
+val 나이 = 15
+val 구분 = when (나이) {
+    in 0..12 -> "어린이"
+    in 13..19 -> "청소년"
+    else -> "성인"
+}
+println("${나이}살은 $구분")
+
+// while: 콜라츠 수열이 1에 닿을 때까지 몇 단계 걸리는지
+var n = 27
+var 단계 = 0
+while (n != 1) {
+    n = if (n % 2 == 0) n / 2 else 3 * n + 1
+    단계 += 1
+}
+println("27은 ${단계}단계 만에 1이 됩니다")
+
+// break와 continue: 50 이하에서 7의 배수가 아닌 첫 소수 다섯 개
+var 찾은개수 = 0
+for (후보 in 2..50) {
+    var 소수 = true
+    for (d in 2..<후보) {
+        if (후보 % d == 0) {
+            소수 = false
+            break
+        }
+    }
+    if (!소수 || 후보 == 7) continue
+    print("$후보 ")
+    찾은개수 += 1
+    if (찾은개수 == 5) break
+}
+println()
